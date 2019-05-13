@@ -1,0 +1,395 @@
+---
+title: "ACGS workforce data"
+author: "Stef Piatek"
+date: "1 May 2019"
+output: 
+  html_document: 
+    keep_md: TRUE
+params: 
+  year: "2018"
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(here)
+library(glue)
+library(stringr)
+library(readxl)
+library(purrr)
+library(knitr)
+library(ggsci)
+library(xlsx)
+
+read_survey <- function(path) {
+  lab_name <- read_excel(path) %>%
+    filter(row_number() == 3) %>%
+    pull("..3")
+
+  if (is.na(lab_name)) {
+    print(path)
+  }
+
+  read_excel(path, skip = 6) %>%
+    mutate(lab_name = lab_name) %>%
+    select(-1) %>%
+    mutate(`WTE in post` = as.numeric(`WTE in post`))
+}
+```
+
+## Read in year data
+
+
+```{r read, warning=FALSE, message=FALSE, echo=TRUE}
+
+year <- as.numeric(params$year)
+print(glue("Year: {year}"))
+
+files <- Sys.glob(here(glue("{year - 1}*/ACGS Workforce*")))
+print("Found the following files:")
+print(str_remove(files, here("/")))
+
+
+raw_data <- map_dfr(.x = files, .f = read_survey)
+
+year_surveys <- raw_data %>%
+  # edit band
+  rename(band = `Agenda for Change Band`) %>%
+  mutate(band = str_to_lower(band)) %>%
+  mutate(band = str_replace(band, "^[ ]*8[ ]*$", "8a")) %>%
+  mutate(band = str_replace(band, "^6 in a 7$", "7")) %>%
+  mutate(band = str_replace(band, "x[nr]08", "8a")) %>%
+  mutate(band = str_replace(band, "x[nr]09", "8b")) %>%
+  mutate(band = str_replace(band, "x[nr]10", "8c")) %>%
+  mutate(band = str_replace(band, "x[nr]11", "8d")) %>%
+  mutate(band = str_replace(band, "x[nr]12", "9")) %>%
+  mutate(band = str_replace(band, "afc annexe u", "6")) %>%
+  mutate(band = str_replace(band, "consultant \\(post 31 oct\\)", "8c")) %>% 
+  mutate(band = if_else(`Primary Job Role` == "Apprentice",
+                        "Apprentice",
+                        band)) %>%
+  mutate(band = str_remove(band, "x[nr]0")) %>%
+  mutate(band = str_remove(band, "review body band ")) %>%
+  mutate(band = str_remove(band, "- range ")) %>%
+  mutate(band = str_remove(band, "band ")) %>%
+  mutate(band = str_remove(band, " - honorary contract")) %>%
+  mutate(band = str_remove(band, " ")) %>%
+  # edit gender
+  mutate(Gender = str_to_upper(Gender)) %>%
+  # edit age
+  mutate(Age = str_replace(Age, "20-30", "20-29")) %>%
+  mutate(Age = str_replace(Age, "39-39", "30-39")) %>%
+  mutate(Age = str_replace(Age, "60-65", "60+")) %>%
+  mutate(Age = str_replace(Age, "50-55", "50-59")) %>%
+  mutate(Age = str_replace(Age, "56-59", "50-59")) %>%
+  # edit aditional roles
+  mutate(add_roles = str_remove(`Additional Role (If applicable)`, "Additional Role")) %>%
+  mutate(add_roles = str_remove(add_roles, "Other \\(please specify in Comments\\)")) %>%
+  mutate(add_roles = str_remove(add_roles, "_Training Officer")) %>%
+  mutate(add_roles = str_replace(add_roles, "Training Manager", "Training Officer")) %>%
+  mutate(add_roles = ifelse(add_roles == "", NA, add_roles)) %>%
+  # edit primary role
+  mutate(primary_role = str_replace(`Primary Job Role`, "(Admin and Clerical|Admin & Clerical Assistant)", "Admin & Clerical")) %>%
+  mutate(primary_role = str_replace(primary_role, "(Secretary\\/Office Administrator)|(Officer Manager\\/Personal Assistant)", "Admin & Clerical")) %>%
+  mutate(primary_role = str_replace(primary_role, "Administrator", "Admin & Clerical")) %>%
+  mutate(primary_role = str_replace(primary_role, "Bioinfomatician", "Bioinformatician")) %>%
+  mutate(primary_role = str_replace(primary_role, "Pre-Registered", "Pre-Registration")) %>%
+  mutate(primary_role = str_remove(primary_role, "Practitioner\\/")) %>%
+  mutate(primary_role = str_remove(primary_role, "Consultant ")) %>%
+  mutate(primary_role = str_remove(primary_role, "Genetic ")) %>%
+  mutate(primary_role = str_remove(primary_role, "Senior ")) %>%
+  mutate(primary_role = str_remove(primary_role, "Honorary ")) %>%
+  mutate(primary_role = str_replace(primary_role, "MLA", "Assistant")) %>%
+  mutate(primary_role = str_replace(primary_role, "MTO[123]?", "Technician")) %>%
+  mutate(primary_role = str_replace(primary_role, "Medical Technical Officer[ ]?[3]?", "Technician")) %>%
+  mutate(primary_role = str_replace(primary_role, "OTHER( \\(please specify in comments\\))?", "Other")) %>%
+  mutate(primary_role = str_replace(primary_role, "Associate Practitioner", "Associate")) %>%
+  mutate(primary_role = str_replace(primary_role, "(Healthcare Scientist|Consultant|Cytogenetist)", "Clinical Scientist")) %>%
+  mutate(primary_role = str_replace(
+    primary_role, "Departmental Secretary and Office Administrator", "Administrator"
+  )) %>%
+  mutate(primary_role = str_replace(primary_role, "Medical Laboratory Assistant", "Assistant")) %>%
+  mutate(primary_role = str_replace(primary_role, "Research Scientist", "Research")) %>%
+  mutate(primary_role = str_replace(
+    primary_role, "^(Practitioner|Technician|Technologist)$", "Practitioner/Technician"
+  )) %>%
+  mutate(primary_role = str_replace(primary_role, "Clinical Clinical", "Clinical")) %>%
+  # edit registration status
+  mutate(registration = str_replace(
+    `Registration/Training Status`, "^.*waiting [rR]egistration$", "Awaiting Registration"
+  )) %>%
+  mutate(registration = str_replace(registration, "^[Ii]n [Tt]raining(-GT\\/PTP| -Non STP)?", "Training")) %>%
+  mutate(registration = str_replace(registration, "^Training -", "Training ")) %>%
+  mutate(registration = str_replace(registration, "^HCPC.*", "HCPC")) %>%
+  mutate(registration = str_replace(registration, "^[Nn]ot [Rr]egistered", "Not Registered")) %>%
+  mutate(registration = ifelse(registration == "N/A", NA, registration)) %>%
+  mutate(registration = str_replace(registration, "^STP$", "Training STP")) %>%
+  mutate(registration = str_replace(registration, "Pre-Registered", "Training")) %>%
+  mutate(registration = str_replace(registration, "VRC/AHCS", "AHCS"))
+
+
+# print("Missing WTE")
+# year_surveys %>%
+#   filter(is.na(`WTE in post`)) %>%
+#   kable()
+
+# print("other band")
+# year_surveys %>%
+#   filter(!is.na(band)) %>%
+#   filter(!band %in%  c(1:9, "8a", "8b", "8c", "8d"))
+
+print("Staff groups")
+levels(as.factor(year_surveys$primary_role))
+
+print("Additional roles")
+levels(as.factor(year_surveys$add_roles))
+
+## time series data
+
+
+yearly_number <- read_csv(here("yearly_wte.csv")) %>%
+  gather("type", "value", Number, WTE) %>%
+  filter(Year <= year) %>%
+  bind_rows(summarise(year_surveys, Year = year, type = "Number", value = max(n()))) %>%
+  bind_rows(summarise(year_surveys,
+    Year = year, type = "WTE",
+    value = sum(year_surveys$`WTE in post`, na.rm = TRUE)
+  )) 
+
+current_year_bands <- year_surveys %>%
+  filter(!is.na(band)) %>%
+  filter(band %in%  c(2:9, "8a", "8b", "8c", "8d")) %>%
+  group_by(band) %>%
+  summarise(Year = year, value = max(n()))
+  
+yearly_band <- read_csv(here("yearly_bands.csv")) %>%
+  gather("band", "value", `2`:`9`) %>%
+  mutate(band = str_remove(band, "\\.\\.[:digit:]+")) %>%
+  filter(Year != year) %>%
+  bind_rows(current_year_bands)
+
+# save updated data
+yearly_number %>%
+  spread(type, value) %>%
+  write_csv(here("yearly_wte.csv"))
+
+
+yearly_band %>%
+  spread(band, value)%>%
+  write_csv(here("yearly_bands.csv"))
+
+
+```
+
+## Plots
+
+
+
+```{r plots, echo=FALSE}
+
+ggplot(year_surveys, aes(x = band)) +
+  geom_bar() +
+  labs(
+    x = "AFC bands",
+    y = "Staff number",
+    title = "Workforce Profile by Agenda for Change band"
+  ) +
+  theme_bw() + scale_fill_jco() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+year_surveys %>%
+  filter(!is.na(Gender)) %>%
+  ggplot(aes(x = band, fill = Gender)) +
+  geom_bar(position = "dodge") +
+  labs(
+    x = "AFC bands",
+    y = "Staff number",
+    title = "Gender Profile by Agenda for Change band"
+  ) +
+  theme_bw() + scale_fill_jco() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+year_surveys %>%
+  filter(!is.na(Gender)) %>%
+  ggplot(aes(x = band, fill = Gender)) +
+  geom_bar(position = "fill") +
+  labs(
+    x = "AFC bands",
+    y = "Percent",
+    title = "Gender Proportion by Agenda for Change band"
+  ) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  theme_bw() + scale_fill_jco() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+year_surveys %>%
+  filter(!is.na(Gender)) %>%
+  group_by(Gender) %>%
+  mutate(total_in_gender = length(Gender)) %>%
+  group_by(Age, Gender) %>%
+  summarise(percent = length(Gender) / max(total_in_gender)) %>%
+  ggplot(aes(x = Age, fill = Gender, y = percent)) +
+  geom_col(position = "dodge") +
+  labs(
+    x = "Age",
+    y = "Staff Number",
+    title = "Staff Number by Age Group and Gender"
+  ) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  theme_bw() + scale_fill_jco()
+
+
+year_surveys %>%
+  mutate(total_in_age = length(Age)) %>%
+  group_by(Age) %>%
+  summarise(percent = length(Age) / max(total_in_age)) %>%
+  ggplot(aes(x = Age, fill = Age, y = percent)) +
+  geom_col(position = "dodge", colour = "black") +
+  labs(
+    x = "Age",
+    y = "Percent of total workforce",
+    title = "Propotion of workforce in each age group"
+  ) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  theme_bw() + scale_fill_jco()
+
+year_surveys %>%
+  filter(!is.na(Gender)) %>%
+  group_by(Gender) %>%
+  mutate(total_in_age = length(Age)) %>%
+  group_by(Age, Gender) %>%
+  summarise(percent = length(Age) / max(total_in_age)) %>%
+  ggplot(aes(x = Age, fill = Gender, y = percent)) +
+  geom_col(position = "dodge") +
+  labs(
+    x = "Age",
+    y = "Percent of total workforce",
+    title = "Propotion of workforce in each age group by gender"
+  ) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  theme_bw() + scale_fill_jco()
+
+
+year_surveys %>%
+  filter(band %in% seq(2, 7)) %>%
+  ggplot(aes(x = band, fill = Age)) +
+  geom_bar(position = "dodge", colour = "black") +
+  labs(
+    x = "AFC Band",
+    y = "Staff Number",
+    title = "Composition of age Groups by AFC 2-7"
+  ) +
+  theme_bw() + scale_fill_jco()
+
+year_surveys %>%
+  filter(!is.na(band)) %>%
+  filter(band %in% c("8a", "8b", "8c", "8d", "9")) %>%
+  ggplot(aes(x = band, fill = Age)) +
+  geom_bar(position = "dodge", colour = "black") +
+  labs(
+    x = "Band",
+    y = "Staff Number",
+    title = "Composition of age Groups by AFC 8a-9"
+  ) +
+  theme_bw() + scale_fill_jco() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+year_surveys %>%
+  group_by(primary_role) %>%
+  summarise(total = max(n())) %>%
+  ggplot(aes(x = reorder(primary_role, desc(primary_role)), y = total)) +
+  geom_text(aes(label = total, y = total + 20)) +
+  geom_col(position = "dodge", colour = "black") +
+  labs(
+    x = "Role",
+    y = "Staff Number",
+    title = "Workforce by Primary Role"
+  ) +
+  theme_bw() + scale_fill_jco() +
+  coord_flip()
+
+
+year_surveys %>%
+  filter(!is.na(add_roles)) %>%
+  group_by(add_roles) %>%
+  summarise(total = max(n())) %>%
+  ggplot(aes(x = reorder(add_roles, desc(add_roles)), y = total)) +
+  geom_col(position = "dodge") +
+  geom_text(aes(label = total, y = total + 0.5)) +
+  labs(
+    x = "Role",
+    y = "Staff Number",
+    title = "Additional Roles undetaken"
+  ) +
+  theme_bw() + scale_fill_jco() +
+  coord_flip()
+
+
+year_surveys %>%
+  filter(primary_role %in%
+    c("Bioinformatician", "Biomedical Scientist", "Clinical Scientist", "Practitioner/Technician")) %>%
+  group_by(primary_role, registration) %>%
+  summarise(total = max(n())) %>%
+  ggplot(aes(x = registration, fill = registration, y = total)) +
+  geom_col(position = position_dodge(1), colour = "black") +
+  # geom_text(aes(label = total, y = total * 1.1, position = position_dodge(1)) +
+  labs(
+    x = "Job role",
+    y = "Staff number",
+    title = "Registration status",
+    fill = ""
+  ) +
+  facet_wrap(~primary_role, scales = "free_y") +
+  theme_bw() + scale_fill_jco() +
+  guides(fill = FALSE) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+
+yearly_number %>%
+  ggplot(aes(x=Year, y = value, colour = type)) +
+  geom_point() +
+  geom_line() +
+    labs(
+    x = "Year",
+    y = "Total",
+    title = "Staff Number and Whole Time Equivalent",
+    colour = ""
+  ) +
+  theme_bw() + scale_colour_jco() 
+
+
+yearly_band %>%
+  filter(band %in% seq(2, 7)) %>%
+  mutate(band = paste("Band", band)) %>%
+  ggplot(aes(x=Year, y = value, colour = band)) +
+  geom_point() +
+  geom_line() +
+    labs(
+    x = "Year",
+    y = "Total",
+    title = "Staff Number by AFC band (2-7)"
+  ) +
+  facet_wrap(~band) +
+  guides(colour=FALSE) +
+  theme_bw() + scale_colour_jco() 
+  
+
+yearly_band %>%
+  filter(!band %in% seq(2, 7)) %>%
+  mutate(band = paste("Band", band)) %>%
+  ggplot(aes(x=Year, y = value, colour = band)) +
+  geom_point() +
+  geom_line() +
+    labs(
+    x = "Year",
+    y = "Total",
+    title = "Staff Number by AFC band (8 and 9)"
+  ) +
+  facet_wrap(~band) +
+  guides(colour=FALSE) +
+  theme_bw() + scale_colour_jco() 
+  
+
+```
